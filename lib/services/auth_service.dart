@@ -10,6 +10,7 @@ class AuthService with ListenableServiceMixin {
   final fb.FirebaseAuth _auth = fb.FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     clientId: DefaultFirebaseOptions.currentPlatform.iosClientId,
+    scopes: ['email', 'profile'],
   );
 
   fb.User? _user;
@@ -46,18 +47,44 @@ class AuthService with ListenableServiceMixin {
   }
 
   Future<fb.UserCredential?> signInWithGoogle() async {
-    final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-    if (googleUser == null) return null;
+    try {
+      print('Starting Google Sign-In process...');
+      
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        print('Google Sign-In was cancelled by user');
+        return null;
+      }
 
-    final GoogleSignInAuthentication googleAuth =
-        await googleUser.authentication;
+      print('Google user obtained: ${googleUser.email}');
+      
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+      
+      print('Google authentication completed');
 
-    final credential = fb.GoogleAuthProvider.credential(
-      accessToken: googleAuth.accessToken,
-      idToken: googleAuth.idToken,
-    );
+      final credential = fb.GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
 
-    return await _auth.signInWithCredential(credential);
+      print('Firebase credential created, signing in...');
+      
+      final userCredential = await _auth.signInWithCredential(credential);
+      print('Firebase sign-in successful: ${userCredential.user?.email}');
+      
+      return userCredential;
+    } catch (e) {
+      print('Google Sign-In error: $e');
+      print('Error type: ${e.runtimeType}');
+      if (e.toString().contains('network')) {
+        print('Network-related error detected');
+      }
+      if (e.toString().contains('cancelled')) {
+        print('User cancelled the sign-in');
+      }
+      rethrow;
+    }
   }
 
   Future<void> signOut() async {
@@ -65,5 +92,16 @@ class AuthService with ListenableServiceMixin {
     try {
       await _googleSignIn.signOut();
     } catch (_) {}
+  }
+
+  Future<bool> isGoogleSignInAvailable() async {
+    try {
+      final isAvailable = await _googleSignIn.isSignedIn();
+      print('Google Sign-In availability check: $isAvailable');
+      return true;
+    } catch (e) {
+      print('Google Sign-In not available: $e');
+      return false;
+    }
   }
 }

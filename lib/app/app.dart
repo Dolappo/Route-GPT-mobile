@@ -12,6 +12,7 @@ import '../services/gemini_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/maps_service.dart';
 import '../services/usage_service.dart';
+import '../ui/styles/theme_manager.dart';
 import '../ui/views/chat/chat_view.dart';
 // @stacked-import
 
@@ -32,6 +33,7 @@ import '../ui/views/chat/chat_view.dart';
     LazySingleton(classType: LocalStorageService),
     LazySingleton(classType: UsageService),
     LazySingleton(classType: AuthService),
+    LazySingleton(classType: ThemeNotifier),
     // @stacked-service
   ],
   bottomsheets: [

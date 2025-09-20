@@ -14,7 +14,9 @@ class MapsService {
   final Map<String, Map<String, dynamic>> _placeCache = {};
   final Map<String, List<String>> _landmarkCache = {};
 
-  MapsService() : _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+  MapsService() : _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '' {
+    _updateCacheWithCoordinates();
+  }
 
   Future<LocationData> getCurrentLocation() async {
     // Return cached location if available and recent (within 30 seconds)
@@ -312,7 +314,10 @@ class MapsService {
           'name': place['displayName']['text'] ?? '',
           'lat': place['location']['latitude'].toString(),
           'lng': place['location']['longitude'].toString(),
+          'coordinates': '${place['location']['latitude']},${place['location']['longitude']}',
         };
+
+        print('Place search result for "$query": $result');
 
         // Cache the result
         _placeCache[query] = result;
@@ -353,5 +358,15 @@ class MapsService {
   void clearCache() {
     _placeCache.clear();
     _landmarkCache.clear();
+  }
+
+  // Update existing cache entries to include coordinates
+  void _updateCacheWithCoordinates() {
+    for (final entry in _placeCache.entries) {
+      final data = entry.value;
+      if (data['coordinates'] == null && data['lat'] != null && data['lng'] != null) {
+        data['coordinates'] = '${data['lat']},${data['lng']}';
+      }
+    }
   }
 }

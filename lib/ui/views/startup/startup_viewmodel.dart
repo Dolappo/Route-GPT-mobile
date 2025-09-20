@@ -31,6 +31,8 @@ class StartupViewModel extends BaseViewModel {
         // Continue anyway, permission can be requested later
       }
     }
-    _navigationService.replaceWithOnboardingView();
+    isFirstLaunch
+        ? _navigationService.replaceWithOnboardingView()
+        : _navigationService.replaceWithChatView();
   }
 }

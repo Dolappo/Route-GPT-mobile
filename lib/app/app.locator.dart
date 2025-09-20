@@ -6,36 +6,43 @@
 
 // ignore_for_file: public_member_api_docs, implementation_imports, depend_on_referenced_packages
 
-import 'package:route_gpt/services/auth_service.dart';
-import 'package:route_gpt/services/local_storage_service.dart';
-import 'package:route_gpt/services/usage_service.dart';
-import 'package:route_gpt/services/profile_service.dart';
-import 'package:stacked_services/src/bottom_sheet/bottom_sheet_service.dart';
-import 'package:stacked_services/src/dialog/dialog_service.dart';
-import 'package:stacked_services/src/navigation/navigation_service.dart';
-import 'package:stacked_shared/stacked_shared.dart';
+import 'package:get_it/get_it.dart';
+import 'package:route_gpt/ui/styles/style.dart';
+import 'package:stacked_services/stacked_services.dart';
 
+import '../services/auth_service.dart';
+import '../services/chat_history_service.dart';
+import '../services/firestore_memory_service.dart';
 import '../services/gemini_service.dart';
+import '../services/hive_chat_service.dart';
+import '../services/local_storage_service.dart';
 import '../services/maps_service.dart';
+import '../services/network_service.dart';
+import '../services/profile_service.dart';
+import '../services/usage_service.dart';
 
-final locator = StackedLocator.instance;
+final locator = GetIt.instance;
 
-Future<void> setupLocator({
-  String? environment,
-  EnvironmentFilter? environmentFilter,
-}) async {
-// Register environments
-  locator.registerEnvironment(
-      environment: environment, environmentFilter: environmentFilter);
-
-// Register dependencies
-  locator.registerLazySingleton(() => BottomSheetService());
-  locator.registerLazySingleton(() => DialogService());
+void setupLocator() {
   locator.registerLazySingleton(() => NavigationService());
-  locator.registerLazySingleton(() => GeminiService());
+  locator.registerLazySingleton(() => DialogService());
+  locator.registerLazySingleton(() => SnackbarService());
+  locator.registerLazySingleton(() => BottomSheetService());
+
   locator.registerLazySingleton(() => MapsService());
+  locator.registerLazySingleton(() => GeminiService());
   locator.registerLazySingleton(() => LocalStorageService());
-  locator.registerLazySingleton(() => UsageService());
   locator.registerLazySingleton(() => AuthService());
+  locator.registerLazySingleton(() => UsageService());
   locator.registerLazySingleton(() => ProfileService());
+  locator.registerLazySingleton(() => NetworkService());
+  locator.registerLazySingleton(() => FirestoreMemoryService());
+  locator.registerLazySingleton(() => ThemeNotifier.getInstance);
+
+  // Register HiveChatService first
+  locator.registerLazySingleton(() => HiveChatService());
+
+  // Register ChatHistoryService with HiveChatService dependency
+  locator.registerLazySingleton(
+      () => ChatHistoryService(locator<HiveChatService>()));
 }

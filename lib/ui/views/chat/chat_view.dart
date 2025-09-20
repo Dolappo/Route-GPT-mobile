@@ -5,6 +5,8 @@ import 'package:route_gpt/ui/styles/color.dart';
 import 'package:route_gpt/ui/styles/dimension.dart';
 import 'package:stacked/stacked.dart';
 
+import '../../../models/chat_message.dart';
+import '../../views/map/map_view.dart';
 import 'chat_viewmodel.dart';
 
 class ChatView extends StackedView<ChatViewModel> {
@@ -14,6 +16,7 @@ class ChatView extends StackedView<ChatViewModel> {
   Widget builder(BuildContext context, ChatViewModel viewModel, Widget? child) {
     return Scaffold(
       key: viewModel.scaffoldKey,
+      // backgroundColor: appColor.backgroundColor,
       endDrawer: _EndDrawer(viewModel: viewModel),
       body: Padding(
         padding: Dimen.bodyPadding,
@@ -24,13 +27,14 @@ class ChatView extends StackedView<ChatViewModel> {
                 controller: viewModel.scrollController,
                 slivers: [
                   SliverAppBar(
-                    surfaceTintColor: appColor.secondaryColor,
+                    // surfaceTintColor: appColor.backgroundColor,
                     automaticallyImplyLeading: false,
                     expandedHeight: 50.0,
                     floating: true,
-                    pinned: true,
+                    // pinned: true,
                     centerTitle: false,
                     snap: true,
+                    // backgroundColor: appColor.backgroundColor,
                     title: Row(
                       children: [
                         Text(
@@ -68,67 +72,96 @@ class ChatView extends StackedView<ChatViewModel> {
                                   ),
                         ),
                       ),
-                      const Gap(10),
+                      if (viewModel.isAuthenticated &&
+                          viewModel.pendingMessagesCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.8),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${viewModel.pendingMessagesCount}',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                          ),
+                        ),
+                      if (viewModel.isAuthenticated && !viewModel.isOnline)
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 10),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withValues(alpha: 0.8),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.wifi_off,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      const SizedBox(width: 10),
                       GestureDetector(
                         onTap: () {
-                          print("Open drawer");
-                          viewModel.scaffoldKey.currentState!.openEndDrawer();
+                          viewModel.scaffoldKey.currentState?.openEndDrawer();
                         },
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _ProfileCircle(viewModel: viewModel),
-                            const SizedBox(height: 4),
-                            Text(
-                              viewModel.isAuthenticated
-                                  ? (viewModel.currentUserFirstName ?? '')
-                                  : 'Sign in',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
+                        child: _ProfileCircle(viewModel: viewModel),
                       ),
                     ],
                   ),
                   if (viewModel.messages.isEmpty)
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 40),
-                        child: Center(
-                          child: Text(
-                            'Hello, how can I help you today?',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(
-                                    color: Colors.grey,
-                                    fontStyle: FontStyle.italic),
-                          ),
+                    SliverFillRemaining(
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.chat_bubble_outline,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const Gap(16),
+                            Text(
+                              "Hello, how can I help you today?",
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(
+                                    color: Colors.grey[600],
+                                  ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
                         ),
                       ),
-                    )
-                  else
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final message = viewModel.messages[index];
-                          return _MessageBubble(
-                            message: message,
-                            onRetry: () => viewModel.retryMessage(index),
-                          );
-                        },
-                        childCount: viewModel.messages.length,
-                      ),
                     ),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final message = viewModel.messages[index];
+                        return _MessageBubble(
+                          message: message,
+                          onRetry: message.status == MessageStatus.error
+                              ? () => viewModel.retryMessage(index)
+                              : null,
+                        );
+                      },
+                      childCount: viewModel.messages.length,
+                    ),
+                  ),
                 ],
               ),
             ),
-            const Gap(10),
-            if (viewModel.isBusy) const LinearProgressIndicator(),
             _InputField(
               onSubmitted: viewModel.sendMessage,
               enabled:
-                  !viewModel.isProcessing && viewModel.remainingFreePrompts > 0,
+                  viewModel.remainingFreePrompts > 0 && !viewModel.isProcessing,
+              isOffline: viewModel.isAuthenticated && !viewModel.isOnline,
             ),
           ],
         ),
@@ -141,31 +174,42 @@ class ChatView extends StackedView<ChatViewModel> {
 
   @override
   void onViewModelReady(ChatViewModel viewModel) {
-    super.onViewModelReady(viewModel);
     viewModel.initialize();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!viewModel.hasShownCreateAccountDialog &&
-          !viewModel.isAuthenticated) {
-        viewModel.showCreateAccountDialogIfNeeded();
-      }
-    });
+    viewModel.showCreateAccountDialogIfNeeded();
   }
 }
 
 class _ProfileCircle extends StatelessWidget {
   final ChatViewModel viewModel;
+
   const _ProfileCircle({required this.viewModel});
 
   @override
   Widget build(BuildContext context) {
     final photo = viewModel.currentUserPhotoUrl;
-    return CircleAvatar(
-      radius: 16,
-      backgroundColor: Colors.white.withValues(alpha: 0.2),
-      backgroundImage: photo != null ? NetworkImage(photo) : null,
-      child: photo == null
-          ? const Icon(Icons.person, size: 16, color: Colors.white)
-          : null,
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CircleAvatar(
+          radius: 16,
+          backgroundColor: photo != null
+              ? Colors.transparent
+              : Colors.grey.withValues(alpha: 0.3),
+          backgroundImage: photo != null ? NetworkImage(photo) : null,
+          child: photo == null
+              ? const Icon(Icons.person, size: 16, color: Colors.white)
+              : null,
+        ),
+        if (!viewModel.isAuthenticated)
+          Text(
+            'Sign in',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[600],
+                  fontSize: 10,
+                ),
+          ),
+      ],
     );
   }
 }
@@ -209,22 +253,14 @@ class _EndDrawer extends StatelessWidget {
               ),
             ),
             Divider(color: appColor.dividerColor),
-            if (viewModel.isAuthenticated)
-              ListTile(
-                leading: const Icon(Icons.logout),
-                title: const Text('Logout'),
-                onTap: () async {
-                  await viewModel.logout();
-                  Navigator.of(context).maybePop();
-                },
-              )
-            else
+            if (!viewModel.isAuthenticated)
               ListTile(
                 leading: const Icon(Icons.login),
                 title: const Text('Sign in with Google'),
                 onTap: () async {
+                  final navigator = Navigator.of(context);
                   final ok = await viewModel.signInWithGoogle();
-                  if (ok) Navigator.of(context).maybePop();
+                  if (ok) navigator.maybePop();
                 },
               ),
             if (!viewModel.isAuthenticated)
@@ -232,11 +268,13 @@ class _EndDrawer extends StatelessWidget {
                 leading: const Icon(Icons.email),
                 title: const Text('Sign in with Email'),
                 onTap: () async {
+                  final navigator = Navigator.of(context);
                   // Minimal inline email sign-in prompt
                   final emailController = TextEditingController();
                   final pwController = TextEditingController();
+                  final ctx = navigator.context;
                   await showDialog(
-                    context: context,
+                    context: ctx,
                     builder: (ctx) => AlertDialog(
                       title: const Text('Sign in'),
                       content: Column(
@@ -262,17 +300,67 @@ class _EndDrawer extends StatelessWidget {
                         ),
                         TextButton(
                           onPressed: () async {
+                            final dialogNavigator = Navigator.of(ctx);
                             final ok = await viewModel.signInWithEmail(
                                 emailController.text.trim(), pwController.text);
-                            if (ok) Navigator.of(ctx).pop();
+                            if (ok) dialogNavigator.pop();
                           },
                           child: const Text('Sign in'),
                         ),
                       ],
                     ),
                   );
-                  Navigator.of(context).maybePop();
+                  navigator.maybePop();
                 },
+              ),
+            if (viewModel.isAuthenticated)
+              ListTile(
+                leading: const Icon(Icons.clear_all),
+                title: const Text('Clear Today\'s Chat'),
+                onTap: () async {
+                  final navigator = Navigator.of(context);
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogCtx) => AlertDialog(
+                      title: const Text('Clear Chat'),
+                      content: const Text(
+                          'Are you sure you want to clear today\'s chat history?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogCtx).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogCtx).pop(true),
+                          child: const Text('Clear'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirmed == true) {
+                    await viewModel.clearTodayChat();
+                    navigator.maybePop();
+                  }
+                },
+              ),
+            if (viewModel.isAuthenticated && viewModel.pendingMessagesCount > 0)
+              ListTile(
+                leading: const Icon(Icons.sync),
+                title: Text(
+                    'Sync Pending Messages (${viewModel.pendingMessagesCount})'),
+                onTap: () async {
+                  final navigator = Navigator.of(context);
+                  await viewModel.forceSync();
+                  navigator.maybePop();
+                },
+              ),
+            if (viewModel.isAuthenticated && !viewModel.isOnline)
+              const ListTile(
+                leading: Icon(Icons.wifi_off),
+                title: Text('Offline Mode'),
+                subtitle: Text('Messages will sync when online'),
+                onTap: null,
               ),
             ListTile(
               leading: const Icon(Icons.settings),
@@ -281,6 +369,23 @@ class _EndDrawer extends StatelessWidget {
                 // TODO: Navigate to settings view when implemented
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Light mode'),
+              trailing: Switch.adaptive(
+                  value: viewModel.isLightTheme,
+                  onChanged: (val) => viewModel.toggleTheme(val)),
+            ),
+            if (viewModel.isAuthenticated)
+              ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('Logout'),
+                onTap: () async {
+                  final navigator = Navigator.of(context);
+                  await viewModel.logout();
+                  navigator.maybePop();
+                },
+              ),
           ],
         ),
       ),
@@ -299,6 +404,12 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasMapData = message.metadata?['hasMapData'] == true;
+    final originCoordinates = message.metadata?['originCoordinates'] as String?;
+    final destinationCoordinates =
+        message.metadata?['destinationCoordinates'] as String?;
+    final travelMode = message.metadata?['travelMode'] as String? ?? 'DRIVE';
+
     return Align(
       alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -328,6 +439,44 @@ class _MessageBubble extends StatelessWidget {
                     color: Colors.white,
                   ),
             ),
+            if (hasMapData &&
+                originCoordinates != null &&
+                destinationCoordinates != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    try {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => MapView(
+                            originCoordinates: originCoordinates,
+                            destinationCoordinates: destinationCoordinates,
+                            travelMode: travelMode,
+                          ),
+                        ),
+                      );
+                    } catch (e) {
+                      print('Error navigating to map: $e');
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error opening map: $e'),
+                          duration: const Duration(seconds: 3),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.map, size: 16),
+                  label: const Text('View on Map'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue.withValues(alpha: 0.8),
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    minimumSize: const Size(0, 32),
+                  ),
+                ),
+              ),
             const SizedBox(height: 4),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -397,10 +546,12 @@ class _MessageBubble extends StatelessWidget {
 class _InputField extends StatefulWidget {
   final Function(String) onSubmitted;
   final bool enabled;
+  final bool isOffline;
 
   const _InputField({
     required this.onSubmitted,
     required this.enabled,
+    required this.isOffline,
   });
 
   @override
@@ -421,9 +572,11 @@ class _InputFieldState extends State<_InputField> {
               controller: _controller,
               style: Theme.of(context).textTheme.bodyMedium,
               decoration: InputDecoration(
-                hintText: widget.enabled
-                    ? 'Ask for directions or traffic info...'
-                    : 'Create an account to continue',
+                hintText: widget.isOffline
+                    ? 'You\'re offline. Connect to send messages.'
+                    : widget.enabled
+                        ? 'Ask for directions or traffic info...'
+                        : 'Create an account to continue',
                 hintStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).hintColor,
                     ),
@@ -431,15 +584,16 @@ class _InputFieldState extends State<_InputField> {
                   borderRadius: BorderRadius.all(Radius.circular(20)),
                 ),
               ),
-              enabled: widget.enabled,
+              enabled: widget.enabled && !widget.isOffline,
               onSubmitted: _handleSubmit,
             ),
           ),
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.send),
-            onPressed:
-                widget.enabled ? () => _handleSubmit(_controller.text) : null,
+            onPressed: (widget.enabled && !widget.isOffline)
+                ? () => _handleSubmit(_controller.text)
+                : null,
           ),
         ],
       ),

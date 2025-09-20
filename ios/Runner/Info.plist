@@ -48,14 +48,14 @@
         <string>Editor</string>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>com.googleusercontent.apps.181202602436-e05nni7945l1v6rt4rpd5admaqr2fe2p</string>
+          <string>com.googleusercontent.apps.181202602436-7anag07k82joiv7efa71a8lkhlr349fr</string>
         </array>
       </dict>
     </array>
     <key>LSApplicationQueriesSchemes</key>
     <array>
       <string>com.google</string>
-      <string>com.googleusercontent.apps.181202602436-e05nni7945l1v6rt4rpd5admaqr2fe2p</string>
+      <string>com.googleusercontent.apps.181202602436-7anag07k82joiv7efa71a8lkhlr349fr</string>
     </array>
 
 	<key>CADisableMinimumFrameDurationOnPhone</key>
