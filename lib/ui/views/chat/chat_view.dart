@@ -6,6 +6,7 @@ import 'package:route_gpt/ui/styles/dimension.dart';
 import 'package:stacked/stacked.dart';
 
 import '../../../models/chat_message.dart';
+import '../../common/typing_indicator.dart';
 import '../../views/map/map_view.dart';
 import 'chat_viewmodel.dart';
 
@@ -52,13 +53,13 @@ class ChatView extends StackedView<ChatViewModel> {
                             horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: viewModel.remainingFreePrompts > 0
-                              ? Colors.green.withValues(alpha: 0.2)
-                              : Colors.orange.withValues(alpha: 0.2),
+              color: viewModel.remainingFreePrompts > 0
+                ? Colors.green.withOpacity(0.2)
+                : Colors.orange.withOpacity(0.2),
                           border: Border.all(
-                            color: viewModel.remainingFreePrompts > 0
-                                ? Colors.green.withValues(alpha: 0.5)
-                                : Colors.orange.withValues(alpha: 0.5),
+              color: viewModel.remainingFreePrompts > 0
+                ? Colors.green.withOpacity(0.5)
+                : Colors.orange.withOpacity(0.5),
                           ),
                         ),
                         child: Text(
@@ -78,7 +79,7 @@ class ChatView extends StackedView<ChatViewModel> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: Colors.orange.withValues(alpha: 0.8),
+                            color: Colors.orange.withOpacity(0.8),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
@@ -96,7 +97,7 @@ class ChatView extends StackedView<ChatViewModel> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: Colors.red.withValues(alpha: 0.8),
+                            color: Colors.red.withOpacity(0.8),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Icon(
@@ -154,6 +155,13 @@ class ChatView extends StackedView<ChatViewModel> {
                       childCount: viewModel.messages.length,
                     ),
                   ),
+                  if (viewModel.isTyping)
+                    const SliverToBoxAdapter(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: TypingIndicator(),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -193,9 +201,9 @@ class _ProfileCircle extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 16,
-          backgroundColor: photo != null
-              ? Colors.transparent
-              : Colors.grey.withValues(alpha: 0.3),
+      backgroundColor: photo != null
+        ? Colors.transparent
+        : Colors.grey.withOpacity(0.3),
           backgroundImage: photo != null ? NetworkImage(photo) : null,
           child: photo == null
               ? const Icon(Icons.person, size: 16, color: Colors.white)
@@ -469,7 +477,7 @@ class _MessageBubble extends StatelessWidget {
                   icon: const Icon(Icons.map, size: 16),
                   label: const Text('View on Map'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue.withValues(alpha: 0.8),
+                    backgroundColor: Colors.blue.withOpacity(0.8),
                     foregroundColor: Colors.white,
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -485,7 +493,7 @@ class _MessageBubble extends StatelessWidget {
                 Text(
                   message.formattedTime,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.7),
+                        color: Colors.white.withOpacity(0.7),
                       ),
                 ),
                 const SizedBox(width: 8),
@@ -506,7 +514,7 @@ class _MessageBubble extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
+                        color: Colors.white.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: const Icon(
@@ -523,7 +531,7 @@ class _MessageBubble extends StatelessWidget {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: Colors.orange.withValues(alpha: 0.8),
+                          color: Colors.orange.withOpacity(0.8),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: const Icon(

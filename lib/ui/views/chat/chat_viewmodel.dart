@@ -11,7 +11,7 @@ import '../../../services/firestore_memory_service.dart';
 import '../../../services/gemini_service.dart';
 import '../../../services/maps_service.dart';
 import '../../../services/network_service.dart';
-import '../../../services/profile_service.dart';
+import '../../../services/unified_response_service.dart';
 import '../../../services/usage_service.dart';
 
 class ChatViewModel extends ReactiveViewModel {
@@ -19,10 +19,10 @@ class ChatViewModel extends ReactiveViewModel {
   final _mapsService = locator<MapsService>();
   final _usageService = locator<UsageService>();
   final _authService = locator<AuthService>();
-  final _profileService = locator<ProfileService>();
   final _chatHistoryService = locator<ChatHistoryService>();
   final _networkService = locator<NetworkService>();
   final _firestoreMemoryService = locator<FirestoreMemoryService>();
+  final _unifiedResponseService = locator<UnifiedResponseService>();
   final _theme = locator<ThemeNotifier>();
 
   final List<ChatMessage> messages = [];
@@ -30,13 +30,7 @@ class ChatViewModel extends ReactiveViewModel {
   int _remainingFreePrompts = 0;
   bool _hasShownCreateAccountDialog = false;
   bool _hasLocationPermission = false;
-
-  // Conversational state for missing destination
-  bool _awaitingDestination = false;
-  bool _awaitingOrigin = false;
-  String? _lastOriginCoordinates;
-  String? _lastOriginText;
-  String? _lastTravelMode;
+  bool _isTyping = false;
 
   bool get isProcessing => isBusy;
   bool get hasLocationPermission => _hasLocationPermission;
@@ -47,10 +41,11 @@ class ChatViewModel extends ReactiveViewModel {
   bool get isSyncing => _chatHistoryService.isSyncing;
   int get pendingMessagesCount => _chatHistoryService.pendingMessages.length;
   bool get hasMigrationData => _chatHistoryService.hasMigrationData;
+  bool get isTyping => _isTyping;
   String? get currentUserName => _authService.user?.displayName;
   String? get currentUserFirstName => _authService.user?.displayName != null
-      ? _authService.user!.displayName!.split(' ').first
-      : null;
+    ? _authService.user!.displayName!.split(' ').first
+    : null;
   String? get currentUserEmail => _authService.user?.email;
   String? get currentUserPhotoUrl => _authService.user?.photoURL;
 
@@ -119,12 +114,6 @@ class ChatViewModel extends ReactiveViewModel {
     notifyListeners();
     _scrollToBottom();
 
-    // If we're waiting for more info, handle follow-up without extra prompt checks
-    if (_awaitingDestination || _awaitingOrigin) {
-      await _handleFollowUpReply(replyText: message);
-      return;
-    }
-
     // Network check for authenticated users
     if (isAuthenticated && !isOnline) {
       messages.add(ChatMessage(
@@ -155,6 +144,10 @@ class ChatViewModel extends ReactiveViewModel {
     await _usageService.usePrompt();
     _remainingFreePrompts = await _usageService.getRemainingFreePrompts();
 
+    // Show typing indicator
+    _isTyping = true;
+    notifyListeners();
+
     try {
       // Get conversation history for context (only for authenticated users)
       List<Map<String, dynamic>> conversationHistory = [];
@@ -162,149 +155,155 @@ class ChatViewModel extends ReactiveViewModel {
         conversationHistory = await _firestoreMemoryService.getGeminiContext();
       }
 
-      // Extract location info with or without context
+      // Determine query type and extract context
+      final queryType = _unifiedResponseService.determineQueryType(message);
       final locationInfo = isAuthenticated && conversationHistory.isNotEmpty
-          ? await runBusyFuture(_geminiService.extractLocationInfoWithContext(message, conversationHistory))
+          ? await runBusyFuture(_geminiService.extractLocationInfoWithContext(
+              message, conversationHistory))
           : await runBusyFuture(_geminiService.extractLocationInfo(message));
+      print("Gotten response");
 
-      if (locationInfo['error'] != null) {
-        final errorMessage = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          text:
-              "I apologize, but I couldn't understand your request. Could you please rephrase it?",
-          isUser: false,
-          status: MessageStatus.sent,
-          timestamp: DateTime.now(),
-        );
-        messages.add(errorMessage);
-        await _chatHistoryService.saveMessage(errorMessage);
-        notifyListeners();
-        return;
-      }
+      // Build context data for unified response service
+      Map<String, dynamic> contextData = {
+        'queryType': queryType,
+        'travelMode': locationInfo['travelMode'] ?? 'DRIVE',
+        'needsCurrentLocation': locationInfo['needsCurrentLocation'] ?? false,
+        'query': message, // Pass the original query for better context
+      };
 
-      final queryType = locationInfo['queryType'] ?? 'directions';
-      final travelMode = locationInfo['travelMode'] ?? 'DRIVE';
-      final needsCurrentLocation =
-          locationInfo['needsCurrentLocation'] ?? false;
-
-      String origin = locationInfo['origin'] ?? '';
-      String destination = locationInfo['destination'] ?? '';
-      // Keep last origin text to help with follow-up resolution
-      if (origin.isNotEmpty) _lastOriginText = origin;
-
-      final tasks = <Future<void> Function()>[];
-      String? originCoordinates;
-      String? destinationCoordinates;
-
-      if (needsCurrentLocation ||
-          origin == 'current_location' ||
-          origin.isEmpty) {
-        tasks.add(() async {
+      // Add location data if available
+      if (locationInfo['origin'] != null) {
+        print("I am here cos not null");
+        // If origin is "current_location", get actual coordinates
+        if (locationInfo['origin'] == 'current_location') {
+          print("I am here cos current location");
           try {
             final currentLocation = await _mapsService.getCurrentLocation();
-            originCoordinates =
-                '${currentLocation.latitude},${currentLocation.longitude}';
+      contextData['origin'] =
+        '${currentLocation.latitude},${currentLocation.longitude}';
             _hasLocationPermission = true;
           } catch (e) {
-            throw Exception('Location permission denied');
+            print('Error getting current location: $e');
+            // Ask user to provide location
+            messages.add(ChatMessage(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              text:
+                  'I need your current location to provide directions. Please enable location access in your device settings, or tell me your starting location.',
+              isUser: false,
+              status: MessageStatus.error,
+              timestamp: DateTime.now(),
+            ));
+            notifyListeners();
+            return;
           }
-        });
-      }
-
-      if (origin.isNotEmpty && origin != 'current_location') {
-        tasks.add(() async {
-          try {
-            final placeData = await _mapsService.searchPlace(origin);
-            print('Origin place data: $placeData');
-            originCoordinates = placeData['coordinates'];
-            print('Origin coordinates: $originCoordinates');
-            if (originCoordinates == null) {
-              throw Exception('Could not find origin');
-            }
-          } catch (e) {
-            throw Exception('Could not find origin');
-          }
-        });
-      }
-
-      if (destination.isNotEmpty) {
-        tasks.add(() async {
-          try {
-            final placeData = await _mapsService.searchPlace(destination);
-            print('Destination place data: $placeData');
-            destinationCoordinates = placeData['coordinates'];
-            print('Destination coordinates: $destinationCoordinates');
-            if (destinationCoordinates == null) {
-              throw Exception('Could not find destination');
-            }
-          } catch (e) {
-            throw Exception('Could not find destination');
-          }
-        });
-      }
-
-      try {
-        await Future.wait(tasks.map((task) => task()));
-      } catch (e) {
-        String errorMessage =
-            'Sorry, I encountered an error while processing your request.';
-        if (e.toString().contains('Location permission denied')) {
-          errorMessage =
-              'I need location permission to provide directions. Please enable location access in your device settings.';
-        } else if (e.toString().contains('Could not find origin')) {
-          errorMessage =
-              "I couldn't find the starting location. Could you please provide a more specific address?";
-        } else if (e.toString().contains('Could not find destination')) {
-          errorMessage =
-              "I couldn't find the destination. Please tell me where you'd like to go.";
-          // Switch to conversational follow-up mode for destination
-          _awaitingDestination = true;
-          _awaitingOrigin = false;
-          _lastOriginCoordinates = originCoordinates;
-          _lastTravelMode = travelMode;
+        } else {
+          contextData['origin'] = locationInfo['origin'];
         }
-        final errorMsg = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          text: errorMessage,
-          isUser: false,
-          status: MessageStatus.error,
-          timestamp: DateTime.now(),
-        );
-        messages.add(errorMsg);
-        await _chatHistoryService.saveMessage(errorMsg);
-        notifyListeners();
-        return;
+      }
+      if (locationInfo['destination'] != null) {
+        contextData['destination'] = locationInfo['destination'];
       }
 
-      if (destination.isEmpty) {
-        // Ask user for destination, save context to follow up
-        _awaitingDestination = true;
-        _awaitingOrigin = false;
-        _lastOriginCoordinates = originCoordinates;
-        _lastTravelMode = travelMode;
-
-        final noDestMessage = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          text:
-              'I need a destination to provide directions. Where would you like to go?',
-          isUser: false,
-          status: MessageStatus.sent,
-          timestamp: DateTime.now(),
-        );
-        messages.add(noDestMessage);
-        await _chatHistoryService.saveMessage(noDestMessage);
-        notifyListeners();
-        return;
+      // Handle location-based queries (nearest, nearby, etc.)
+      if (queryType == 'places' &&
+          (message.toLowerCase().contains('nearest') ||
+              message.toLowerCase().contains('nearby') ||
+              message.toLowerCase().contains('closest'))) {
+        // Check if we need current location for nearby searches
+        if (locationInfo['needsCurrentLocation'] == true) {
+          try {
+            final currentLocation = await _mapsService.getCurrentLocation();
+            contextData['latitude'] = currentLocation.latitude;
+            contextData['longitude'] = currentLocation.longitude;
+            _hasLocationPermission = true;
+          } catch (e) {
+            print('Error getting current location: $e');
+            // If location permission is denied, ask user to provide location
+            if (e.toString().contains('Location permission denied')) {
+              messages.add(ChatMessage(
+                id: DateTime.now().millisecondsSinceEpoch.toString(),
+                text:
+                    'I need your location to find nearby places. Please enable location access in your device settings, or tell me which area you\'re in (e.g., "nearest hospital in Mushin").',
+                isUser: false,
+                status: MessageStatus.error,
+                timestamp: DateTime.now(),
+              ));
+              notifyListeners();
+              return;
+            }
+          }
+        }
       }
 
-      await _buildAndSendResponse(
+      // Get current location if needed for other queries
+      if (contextData['needsCurrentLocation'] == true &&
+          contextData['latitude'] == null) {
+        try {
+          final currentLocation = await _mapsService.getCurrentLocation();
+          contextData['currentLatitude'] = currentLocation.latitude;
+          contextData['currentLongitude'] = currentLocation.longitude;
+          _hasLocationPermission = true;
+        } catch (e) {
+          print('Error getting current location: $e');
+          if (e.toString().contains('Location permission denied')) {
+            messages.add(ChatMessage(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              text:
+                  'I need location permission to provide accurate directions. Please enable location access in your device settings.',
+              isUser: false,
+              status: MessageStatus.error,
+              timestamp: DateTime.now(),
+            ));
+            notifyListeners();
+            return;
+          }
+        }
+      }
+
+      // Process query through unified response service
+      final response = await runBusyFuture(_unifiedResponseService.processQuery(
+        userQuery: message,
         queryType: queryType,
-        travelMode: travelMode,
-        originCoordinates: originCoordinates!,
-        destinationCoordinates: destinationCoordinates!,
-        originalQuery: message,
+        contextData: contextData,
+        conversationHistory: conversationHistory,
+      ));
+
+      // Create assistant message
+      final assistantMessage = ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        text: response,
+        isUser: false,
+        status: MessageStatus.sent,
+        timestamp: DateTime.now(),
+        metadata: {
+          'queryType': queryType,
+          'hasContext': conversationHistory.isNotEmpty,
+        },
       );
+      messages.add(assistantMessage);
+      await _chatHistoryService.saveMessage(assistantMessage);
+
+      // Save messages to Firestore short-term memory (only for authenticated users)
+      if (isAuthenticated) {
+        try {
+          final userFirestoreMessage =
+              FirestoreMessage.fromChatMessage(userMessage);
+          final assistantFirestoreMessage =
+              FirestoreMessage.fromChatMessage(assistantMessage);
+          await _firestoreMemoryService
+              .addMessages([userFirestoreMessage, assistantFirestoreMessage]);
+          print(
+              'Successfully saved conversation to Firestore short-term memory');
+        } catch (e) {
+          print('Error saving to Firestore short-term memory: $e');
+        }
+      }
+
+      notifyListeners();
+      _scrollToBottom();
     } catch (e) {
+      // Hide typing indicator on error
+      _isTyping = false;
       String errorMessage =
           'Sorry, I encountered an error while processing your request.';
       if (e.toString().contains('Location permission denied')) {
@@ -317,6 +316,7 @@ class ChatViewModel extends ReactiveViewModel {
         errorMessage =
             "I couldn't find one of the locations you mentioned. Please provide more specific addresses.";
       }
+
       final errorMsg = ChatMessage(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         text: errorMessage,
@@ -327,227 +327,11 @@ class ChatViewModel extends ReactiveViewModel {
       messages.add(errorMsg);
       await _chatHistoryService.saveMessage(errorMsg);
       notifyListeners();
-    }
-  }
-
-  // Handle follow-up flow when awaiting extra info from the user (origin/destination)
-  Future<void> _handleFollowUpReply({required String replyText}) async {
-    final travelMode = _lastTravelMode ?? 'DRIVE';
-    String? originCoordinates = _lastOriginCoordinates;
-    String? destinationCoordinates;
-
-    try {
-      // Get conversation history for context (only for authenticated users)
-      List<Map<String, dynamic>> conversationHistory = [];
-      if (isAuthenticated) {
-        conversationHistory = await _firestoreMemoryService.getGeminiContext();
-      }
-
-      // Try to parse the follow-up for any explicit origin/destination
-      final parsed = isAuthenticated && conversationHistory.isNotEmpty
-          ? await _geminiService.extractLocationInfoWithContext(replyText, conversationHistory)
-          : await _geminiService.extractLocationInfo(replyText);
-      final parsedOriginText = (parsed['origin'] as String?)?.trim() ?? '';
-      final parsedDestinationText =
-          (parsed['destination'] as String?)?.trim() ?? '';
-
-      // Resolve origin
-      if (originCoordinates == null) {
-        if (parsedOriginText.isNotEmpty) {
-          final placeData = await _mapsService.searchPlace(parsedOriginText);
-          originCoordinates = placeData['coordinates'] ??
-              ((placeData['lat'] != null && placeData['lng'] != null)
-                  ? '${placeData['lat']},${placeData['lng']}'
-                  : null);
-        } else if (_lastOriginText != null && _lastOriginText!.isNotEmpty) {
-          final placeData = await _mapsService.searchPlace(_lastOriginText!);
-          originCoordinates = placeData['coordinates'] ??
-              ((placeData['lat'] != null && placeData['lng'] != null)
-                  ? '${placeData['lat']},${placeData['lng']}'
-                  : null);
-        }
-      }
-
-      // Resolve destination
-      if (parsedDestinationText.isNotEmpty) {
-        final placeData = await _mapsService.searchPlace(parsedDestinationText);
-        destinationCoordinates = placeData['coordinates'] ??
-            ((placeData['lat'] != null && placeData['lng'] != null)
-                ? '${placeData['lat']},${placeData['lng']}'
-                : null);
-      } else {
-        // If Gemini didn't extract, assume the reply is the destination
-        final placeData = await _mapsService.searchPlace(replyText);
-        destinationCoordinates = placeData['coordinates'] ??
-            ((placeData['lat'] != null && placeData['lng'] != null)
-                ? '${placeData['lat']},${placeData['lng']}'
-                : null);
-      }
-
-      if (originCoordinates == null) {
-        _awaitingOrigin = true;
-        _awaitingDestination = false;
-        final msg = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          text:
-              "I'm missing the starting point. Please provide both origin and destination.",
-          isUser: false,
-          status: MessageStatus.error,
-          timestamp: DateTime.now(),
-        );
-        messages.add(msg);
-        await _chatHistoryService.saveMessage(msg);
-        notifyListeners();
-        return;
-      }
-
-      if (destinationCoordinates == null) {
-        _awaitingDestination = true;
-        _awaitingOrigin = false;
-        final msg = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          text:
-              "I couldn't find that destination. Could you try a different name or include the city?",
-          isUser: false,
-          status: MessageStatus.error,
-          timestamp: DateTime.now(),
-        );
-        messages.add(msg);
-        await _chatHistoryService.saveMessage(msg);
-        notifyListeners();
-        return;
-      }
-
-      // We have both - clear awaiting flags and proceed
-      _awaitingDestination = false;
-      _awaitingOrigin = false;
-      _lastOriginCoordinates = originCoordinates;
-      _lastTravelMode = travelMode;
-
-      await _buildAndSendResponse(
-        queryType: 'directions',
-        travelMode: travelMode,
-        originCoordinates: originCoordinates,
-        destinationCoordinates: destinationCoordinates,
-        originalQuery: replyText,
-      );
-    } catch (e) {
-      final errorMsg = ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        text:
-            'Sorry, I had trouble understanding that. Could you rephrase or provide clearer locations?',
-        isUser: false,
-        status: MessageStatus.error,
-        timestamp: DateTime.now(),
-      );
-      messages.add(errorMsg);
-      await _chatHistoryService.saveMessage(errorMsg);
+    } finally {
+      // Always hide typing indicator
+      _isTyping = false;
       notifyListeners();
     }
-  }
-
-  Future<void> _buildAndSendResponse({
-    required String queryType,
-    required String travelMode,
-    required String originCoordinates,
-    required String destinationCoordinates,
-    required String originalQuery,
-  }) async {
-    String response = '';
-
-    switch (queryType) {
-      case 'directions':
-        final mapsData = await _mapsService.getDirections(
-            originCoordinates, destinationCoordinates,
-            travelMode: travelMode);
-
-        Map<String, dynamic> contextData = {};
-        List<Map<String, dynamic>> conversationHistory = [];
-        if (isAuthenticated) {
-          contextData = _chatHistoryService.getContextForAI();
-          final userProfile = await _profileService.getUserProfile();
-          if (userProfile != null) {
-            contextData['userProfile'] = userProfile;
-          }
-          // Get conversation history for context
-          conversationHistory = await _firestoreMemoryService.getGeminiContext();
-        }
-
-        response = await _geminiService
-                .formatResponseWithContext({...mapsData, ...contextData}, originalQuery, conversationHistory) ??
-            'Unable to get directions';
-        break;
-      case 'traffic':
-        final trafficData = await _mapsService.getRouteSummary(
-            originCoordinates, destinationCoordinates,
-            travelMode: travelMode);
-
-        Map<String, dynamic> contextData = {};
-        List<Map<String, dynamic>> conversationHistory = [];
-        if (isAuthenticated) {
-          contextData = _chatHistoryService.getContextForAI();
-          // Get conversation history for context
-          conversationHistory = await _firestoreMemoryService.getGeminiContext();
-        }
-
-        response = await _geminiService.formatResponseWithContext(
-                {...trafficData, ...contextData}, originalQuery, conversationHistory) ??
-            'Unable to get traffic information';
-        break;
-      default:
-        response = "I'm not sure how to help with that request.";
-    }
-
-    final assistantMessage = ChatMessage(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      text: response,
-      isUser: false,
-      status: MessageStatus.sent,
-      timestamp: DateTime.now(),
-      metadata: {
-        'queryType': queryType,
-        'travelMode': travelMode,
-        'originCoordinates': originCoordinates,
-        'destinationCoordinates': destinationCoordinates,
-        'hasMapData': true,
-      },
-    );
-    messages.add(assistantMessage);
-
-    await _chatHistoryService.saveMessage(assistantMessage);
-    
-    // Save messages to Firestore short-term memory (only for authenticated users)
-    if (isAuthenticated) {
-      try {
-        // Find the user message that corresponds to this response
-        final userMessage = messages.reversed
-            .firstWhere((msg) => msg.isUser && msg.text == originalQuery);
-        
-        // Create FirestoreMessage objects
-        final userFirestoreMessage = FirestoreMessage.fromChatMessage(userMessage);
-        final assistantFirestoreMessage = FirestoreMessage.fromChatMessage(assistantMessage);
-        
-        // Save both messages to Firestore
-        await _firestoreMemoryService.addMessages([userFirestoreMessage, assistantFirestoreMessage]);
-        print('Successfully saved conversation to Firestore short-term memory');
-      } catch (e) {
-        print('Error saving to Firestore short-term memory: $e');
-        // Don't fail the entire operation if Firestore save fails
-      }
-    }
-    
-    final newContext = {
-      'lastQuery': originalQuery,
-      'lastResponse': response,
-      'lastTravelMode': travelMode,
-      'lastOrigin': originCoordinates,
-      'lastDestination': destinationCoordinates,
-      'lastInteractionTime': DateTime.now().toIso8601String(),
-    };
-    await _chatHistoryService.updateUserMemory(newContext);
-
-    notifyListeners();
-    _scrollToBottom();
   }
 
   void retryMessage(int messageIndex) {
@@ -577,7 +361,7 @@ class ChatViewModel extends ReactiveViewModel {
     await _authService.signOut();
     _remainingFreePrompts = await _usageService.getRemainingFreePrompts();
     messages.clear();
-    
+
     // Clear Firestore short-term memory session
     try {
       await _firestoreMemoryService.clearSession();
@@ -585,7 +369,7 @@ class ChatViewModel extends ReactiveViewModel {
     } catch (e) {
       print('Error clearing Firestore session: $e');
     }
-    
+
     notifyListeners();
   }
 

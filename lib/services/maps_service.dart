@@ -1,9 +1,16 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:location/location.dart';
+
+bool get isSimulator {
+  if (!Platform.isIOS) return false;
+  // print(Platform.environment);
+  return !Platform.environment.containsKey('iPhone 16') ? false : true;
+}
 
 class MapsService {
   final Location _location = Location();
@@ -19,8 +26,10 @@ class MapsService {
   }
 
   Future<LocationData> getCurrentLocation() async {
+    print("hereeee location ");
     // Return cached location if available and recent (within 30 seconds)
     if (_currentLocation != null) {
+      print("hereeee location null ");
       final now = DateTime.now();
       final locationTime = DateTime.fromMillisecondsSinceEpoch(
           _currentLocation!.time?.toInt() ?? 0);
@@ -28,24 +37,39 @@ class MapsService {
         return _currentLocation!;
       }
     }
-
+    print("heree -1");
     bool serviceEnabled = await _location.serviceEnabled();
+    print("heree 0");
     if (!serviceEnabled) {
+      print("heree 1");
       serviceEnabled = await _location.requestService();
       if (!serviceEnabled) {
         throw Exception('Location services are disabled');
       }
     }
-
+    print("heree 2");
     PermissionStatus permissionGranted = await _location.hasPermission();
+    print("heree 3");
     if (permissionGranted == PermissionStatus.denied) {
+      print("heree 4");
       permissionGranted = await _location.requestPermission();
       if (permissionGranted != PermissionStatus.granted) {
         throw Exception('Location permission denied');
       }
     }
-
-    _currentLocation = await _location.getLocation();
+    print("heree 5");
+    _currentLocation =
+        // isSimulator
+        //     ? await _location.getLocation()
+        //     :
+        LocationData.fromMap({
+      "latitude": 37.7749,
+      "longitude": -122.4194,
+      "accuracy": 5.0,
+      "time": DateTime.now().millisecondsSinceEpoch.toDouble()
+    });
+    ;
+    print("heree 6");
     return _currentLocation!;
   }
 
@@ -314,7 +338,8 @@ class MapsService {
           'name': place['displayName']['text'] ?? '',
           'lat': place['location']['latitude'].toString(),
           'lng': place['location']['longitude'].toString(),
-          'coordinates': '${place['location']['latitude']},${place['location']['longitude']}',
+          'coordinates':
+              '${place['location']['latitude']},${place['location']['longitude']}',
         };
 
         print('Place search result for "$query": $result');
@@ -364,7 +389,9 @@ class MapsService {
   void _updateCacheWithCoordinates() {
     for (final entry in _placeCache.entries) {
       final data = entry.value;
-      if (data['coordinates'] == null && data['lat'] != null && data['lng'] != null) {
+      if (data['coordinates'] == null &&
+          data['lat'] != null &&
+          data['lng'] != null) {
         data['coordinates'] = '${data['lat']},${data['lng']}';
       }
     }

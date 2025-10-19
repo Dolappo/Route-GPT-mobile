@@ -1,6 +1,5 @@
 import 'package:route_gpt/app/app.locator.dart';
 import 'package:route_gpt/app/app.router.dart';
-import 'package:route_gpt/services/auth_service.dart';
 import 'package:stacked/stacked.dart';
 import 'package:stacked_services/stacked_services.dart';
 
@@ -10,7 +9,6 @@ import '../../../services/maps_service.dart';
 class StartupViewModel extends BaseViewModel {
   final _navigationService = locator<NavigationService>();
   final _mapsService = locator<MapsService>();
-  final _authService = locator<AuthService>();
   final _localStorageService = locator<LocalStorageService>();
 
   Future runStartupLogic() async {

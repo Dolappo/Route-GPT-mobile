@@ -59,7 +59,6 @@ class CreateAccountDialog extends StackedView<CreateAccountDialogModel> {
             ),
             const Gap(20),
             Row(
-              spacing: 10,
               children: [
                 Expanded(
                     child: Divider(

@@ -28,6 +28,13 @@ Return JSON only:
   "travelMode": "DRIVE|WALK|BICYCLE|TRANSIT",
   "needsCurrentLocation": true/false
 }
+
+Rules:
+- If user asks for directions from their current location, set origin to "current_location"
+- If user asks for directions between two specific places, set both origin and destination
+- If user asks for distance/time between places, set both origin and destination
+- If user asks for nearest places, set needsCurrentLocation to true
+- Always set travelMode to a valid value (DRIVE, WALK, BICYCLE, TRANSIT)
 ''';
 
       print('Sending prompt to Gemini: $prompt');
@@ -39,7 +46,9 @@ Return JSON only:
       // Parse the response as a Map
       final cleanedResponse =
           responseText?.replaceAll('```json', '').replaceAll('```', '').trim();
+      print("Cleaned response: $cleanedResponse");
       if (cleanedResponse != null) {
+        print("Cleaned response true");
         try {
           final Map<String, dynamic> parsedInfo = json.decode(cleanedResponse);
           return parsedInfo;
@@ -93,6 +102,14 @@ Return JSON only:
   "travelMode": "DRIVE|WALK|BICYCLE|TRANSIT",
   "needsCurrentLocation": true/false
 }
+
+Rules:
+- If user asks for directions from their current location, set origin to "current_location"
+- If user asks for directions between two specific places, set both origin and destination
+- If user asks for distance/time between places, set both origin and destination
+- If user asks for nearest places, set needsCurrentLocation to true
+- Always set travelMode to a valid value (DRIVE, WALK, BICYCLE, TRANSIT)
+- Never set travelMode to "null" - use "DRIVE" as default
 ''';
 
       print('Sending contextual prompt to Gemini: $prompt');
@@ -152,6 +169,59 @@ Return JSON only:
         }
       }
 
+      // Add specific context for places queries
+      if (data.containsKey('places') && data['places'] is List) {
+        final places = data['places'] as List<dynamic>;
+        final isNearby = data['is_nearby_search'] as bool? ?? false;
+        final isAreaSearch = data['is_area_search'] as bool? ?? false;
+  final area = data['area'] as String? ?? '';
+
+        if (places.isNotEmpty) {
+          contextPrompt += '\n\nPlaces found:\n';
+          for (int i = 0; i < places.length; i++) {
+            final place = places[i] as Map<String, dynamic>;
+            final name = place['name'] as String? ?? 'Unknown';
+            final address = place['address'] as String? ?? '';
+            final rating = place['rating'] as String? ?? '';
+            final userRatingCount = place['userRatingCount'] as String? ?? '';
+
+            contextPrompt += '${i + 1}. $name';
+            if (address.isNotEmpty) contextPrompt += ' - $address';
+            if (rating.isNotEmpty) contextPrompt += ' (Rating: $rating';
+            if (userRatingCount.isNotEmpty)
+              contextPrompt += ' from $userRatingCount reviews';
+            if (rating.isNotEmpty) contextPrompt += ')';
+            contextPrompt += '\n';
+          }
+
+          // Add context about search type
+          if (isNearby) {
+            contextPrompt +=
+                '\nThese are the nearest places to your current location.\n';
+          } else if (isAreaSearch && area.isNotEmpty) {
+            contextPrompt += '\nThese places are in or near $area.\n';
+          }
+        }
+      }
+
+      // Add specific context for distance queries
+      if (data.containsKey('distance_data')) {
+        final distanceData = data['distance_data'] as Map<String, dynamic>?;
+        if (distanceData != null) {
+          contextPrompt += '\n\nDistance information:\n';
+          contextPrompt +=
+              'Distance: ${distanceData['distance'] ?? 'Unknown'}\n';
+          contextPrompt +=
+              'Duration: ${distanceData['duration'] ?? 'Unknown'}\n';
+          if (distanceData['durationInTraffic'] != null) {
+            contextPrompt +=
+                'Duration with traffic: ${distanceData['durationInTraffic']}\n';
+          }
+          contextPrompt += 'From: ${distanceData['origin'] ?? 'Unknown'}\n';
+          contextPrompt += 'To: ${distanceData['destination'] ?? 'Unknown'}\n';
+        }
+      }
+
       // Add today's chat history context (legacy from Hive)
       if (todayChatHistory.isNotEmpty) {
         contextPrompt += '\n\nToday\'s conversation context:\n';
@@ -198,39 +268,54 @@ Current request: $userQuery
 Route information:
 ${_formatDirectionsData(directions, routeSummary)}
 
-You are RouteGPT, the user’s AI mobility assistant. Use a conversational, helpful, and respectful tone with a touch of warmth. Keep language clear, concise, and easy to follow while remaining empathetic. Do not use markdown, bullets, or any special formatting. Provide plain text only.
+You are RouteGPT, a helpful navigation and location assistant.
+Always respond in plain conversational text only, no markdown, no bullet points, and no special formatting.
 
-Begin every response with a single line route summary that includes total distance, estimated travel time, and current traffic level. Include the timestamp and source of the traffic data in parentheses after the traffic level when available.
+For navigation requests:
 
-After the summary, provide step by step directions in natural, descriptive language that uses well known landmarks and short, actionable sentences. Each step should be simple enough to follow while driving. For each leg include the approximate distance and estimated time for that leg when it meaningfully helps navigation.
+Begin with a friendly route summary that includes distance, estimated travel time, and current traffic conditions.
 
-Personalize responses using the user’s stored context and preferences. If the user has a saved home address or favorite locations in their profile, reference those by the stored label only after verifying the saved place is valid in Google Places and the user has previously consented to use it. If the saved place is missing or ambiguous, ask one brief clarifying question and then continue.
+Provide step-by-step directions in natural, descriptive language with landmarks, making it easy to follow as if you were guiding a friend.
 
-Respect transport mode and unit preferences. If the user has a preferred transport mode or units, use them. If none is set, default to driving, metric units, and 24 hour time for users in Nigeria. State the transport mode in the route summary.
+If there are alternative routes, describe them conversationally, explaining the pros and cons.
 
-Always include current traffic information and how it affects travel time. Report the estimated delay relative to normal conditions and the data source and timestamp. If live traffic data is unavailable or stale, say so explicitly and provide the best estimate based on available information.
+End with a gentle recommendation on which route is best given current conditions.
 
-Offer up to two reasonable alternative routes and explain in one sentence why each might be preferable, for example faster, shorter, cheaper, or safer. End the alternatives section with a single clear recommendation.
+For cost estimates:
 
-Maintain safety and legality. Never instruct or suggest illegal or unsafe driving maneuvers. If a requested route passes through an area known to be unsafe at certain times, warn the user and propose a safer option. If a user request would require risky behavior, refuse politely and give alternatives.
+Compare ride-hailing, public transport, and driving in clear, everyday language.
 
-Keep responses compact. For routes that require many steps, start with a concise high level summary of the route and then offer to provide full turn by turn instructions if the user wants them. Avoid long paragraphs and avoid repeating the same address or landmark more than once.
+Always mention the reasoning, like distance, fuel cost, or average fares.
 
-Provide helpful fallback behavior. If Google Places lookup or directions fail, explain the failure in one sentence, then give one or two simple next steps the user can take such as retyping the place name, choosing a nearby landmark, or sharing their current location. If route input is ambiguous, ask one minimal clarifying question and continue.
+For fuel tracking:
 
-Respect privacy and consent. Only reference or share saved personal locations after explicit consent has been recorded. Allow the user to edit or delete remembered locations on request. Do not include private addresses in any shared transcript or notification without explicit permission.
+Estimate fuel consumption and cost in simple, relatable terms.
 
-When composing prompts for the model, include only the last ten messages of the current session and the most relevant saved preferences. Request deterministic output for routing queries and instruct the model to avoid hallucinations. If the model uses third party traffic or place data, instruct it to state the source and timestamp.
+Mention assumptions like fuel price or vehicle efficiency in a natural way.
 
-Example preferred output format in plain text only
-Route summary: 12.4 km, 28 minutes, moderate traffic (Google Maps traffic, 08:14 local time)
-Step 1: Head north on Adeola Odeku toward Awolowo Road. You will pass Landmark A on your right after about 800 meters.
-Step 2: At the roundabout, take the second exit onto Awolowo Road. Continue for 2.2 kilometers until you reach Landmark B.
-Step 3: Turn left onto Awolowo Expressway and keep right to stay on Awolowo Expressway. Follow signs for Victoria Island. Estimated 12 minutes for this leg.
-Alternative 1: Use Carter Bridge to avoid the expressway delays. This is about 3 minutes slower but uses less toll roads.
-Alternative 2: Use the inner city route through Victoria Island for fewer kilometers but more intersections. I recommend the expressway route right now for overall speed.
-If you want the full turn by turn list, say I want full directions. If the saved address labeled Home should be used as your origin or destination, confirm by saying use Home.
+For event-aware navigation:
 
+If there are events affecting traffic, mention them as if giving a heads-up.
+
+Suggest alternative routes conversationally if needed.
+
+For general location questions:
+
+If asked about nearby places, use Google Places data and answer naturally: "There are two pharmacies nearby, one on XYZ Street and another inside ABC Mall."
+
+For area-specific searches (like "hospital in Mushin"), use phrases like "I found X places in [area]" or "Here are the places in [area]": "I found three hospitals in Mushin: ABC Hospital on Main Street, XYZ Clinic near the market, and DEF Medical Center on Lagos Road."
+
+For distance and time questions, return the answer as a clear, friendly statement.
+
+If no data is available, say so politely and helpfully.
+
+General style:
+
+Always sound like a friendly local guide who knows the city.
+
+Keep responses helpful, clear, and easy to understand.
+
+Never display raw data, coordinates, or JSON. Only natural text.
 Response:''';
 
       final response = await _model.generateContent([Content.text(prompt)]);
